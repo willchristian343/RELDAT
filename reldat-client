@@ -1,0 +1,110 @@
+import utils
+import sys
+import socket
+
+
+if len(sys.argv) != 3:
+    print("Error: please format input as reldat-client.py <IP:Port> <WinSize>")
+    sys.exit()
+
+ipPort = sys.argv[1]
+ipPort = ipPort.split(':')
+serverIP= ipPort[0]
+serverPort = int(ipPort[1])
+winSz = int(sys.argv[2])
+putwinSz = winSz
+currState = "Null"
+seqNum = 0
+ackNum = 1
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+toAddr = (serverIP, int(serverPort))
+while (True):
+   inputCmd = str(raw_input('ENTER: connect, transform <filename.txt>, or disconnect: '))
+   inputCmd = str.split(inputCmd)
+   if (inputCmd[0] == "connect"):
+      if len(inputCmd) != 1:
+        print "just type connect"
+      elif currState == "Null":
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        packet = utils.createPckt("", serverPort, seqNum, ackNum, True, False, False, winSz, "SYN") #Send SYN. Flags = SYN, ACK, END
+        sock.sendto(packet, toAddr)
+
+        packet, addr = sock.recvfrom(4096)
+        header, payload, checksum = utils.unPack(packet)
+
+        if (header[4].strip() == "True" and header[5].strip() == "True"):
+          packet = utils.createPckt("", serverPort, seqNum, ackNum, False, True, False, winSz, "ACK")
+          sock.sendto(packet, toAddr)
+
+          print 'Connection is established'
+          currState = "Connected"
+
+   elif (inputCmd[0] == "disconnect"):
+      if len(inputCmd) != 1:
+        print "Enter just disconnect"
+      elif currState != "Connected":
+         print 'ERROR: must be connected to disconnect'
+      else:
+         currState = "Null"
+         packet = utils.createPckt("", serverPort, seqNum, ackNum, True, False, False, winSz, "disconnect")
+         sock.sendto(packet, toAddr)
+         sock.shutdown(socket.SHUT_RDWR)
+         sock.close()
+
+   elif (inputCmd[0] == "transform"):
+      if len(inputCmd) != 2:
+        print "you must enter a file"
+      elif (currState != "Connected"):
+          print 'Must be connected to send file'
+      else:
+          seqNum = 0
+          filename = inputCmd[1]
+
+          packet = utils.createPckt("", serverPort, seqNum, ackNum, True, False, False, putwinSz, "transform " + filename)
+          sock.sendto(packet, toAddr)
+          payload = utils.openFile(filename)
+          packets = []
+          x = 0
+          winPtr = 0
+          while x < len(payload):
+            if x == len(payload) - 1:
+              packet = utils.createPckt("", serverPort, x, ackNum, True, False, True, putwinSz, payload[x])
+            else:
+              packet = utils.createPckt("", serverPort, x, ackNum, True, False, False, putwinSz, payload[x])
+            packets.append(packet)
+            x += 1
+
+          if (len(packets) < winSz):
+            while winPtr < len(packets):
+              sock.sendto(packets[winPtr], addr)
+              winPtr+=1
+              end = "YES"
+          else:
+            while winPtr < winSz:
+              sock.sendto(packets[winPtr], addr)
+              winPtr+=1
+              end = "NO"
+
+          packet, addr = sock.recvfrom(4096)
+          header, payload, checksum = utils.unPack(packet)
+          seqNum = int(header[3])
+          while end != "YES":
+            winPtr = 0
+            while winPtr < winSz:
+              sock.sendto(packets[winPtr + seqNum], toAddr)
+              if(seqNum+winPtr == len(packets) - 1):
+                winPtr = winSz
+              else:
+                winPtr+=1
+
+            packet, addr = sock.recvfrom(4096)
+            header, payload, checksum = utils.unPack(packet)
+            seqNum = int(header[3])
+            end = header[6]
+          packet, addr = sock.recvfrom(4096)
+          print "Successfully transferred file"
+
+   else:
+      print "unrecognized command entered"

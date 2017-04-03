@@ -1,0 +1,83 @@
+import socket
+import utils
+import sys
+
+
+if len(sys.argv) != 3:
+	print 'Format input reldat-server.py <Port> <WinSize>'
+	sys.exit()
+
+winSz = int(sys.argv[2])
+putwinSz = winSz
+
+serverPort = int(sys.argv[1])
+seqNum = 0
+ackNum = 0
+
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+sock.bind(('', serverPort))
+print 'Listening on PORT', serverPort
+unConnected = True
+isConnected = False
+while (True):
+	if (unConnected):
+		pckt, addr = sock.recvfrom(4096)
+		header, payload, checksum = utils.unPack(pckt)
+
+		if (header[4].strip() == "True"):
+			pckt = utils.createPckt("", serverPort, seqNum, ackNum, True, True, False, winSz, "")
+			sock.sendto(pckt, addr)
+
+			pckt, addr = sock.recvfrom(4096)
+			header, payload, checksum = utils.unPack(pckt)
+
+			if (header[5].strip() == "True"):
+				unConnected = False
+				isConnected = True
+				print 'Connection is established'
+
+	if (isConnected):
+		pckt, addr = sock.recvfrom(4096)
+		header, payload, checksum = utils.unPack(pckt)
+		clientCmd = payload.split(" ")[0]
+		print 'Command received from client:', clientCmd
+
+		if clientCmd == 'disconnect':
+			print 'Client has disconnected'
+			isConnected = False
+			unConnected = True
+
+		elif clientCmd == "transform":
+			ackNum = 0
+			filename = payload.split(" ")[1]
+			pckts = []
+			end = False
+			msg = ""
+			while end != True:
+			  x = 0
+			  while x < winSz:
+
+				pckt, addr = sock.recvfrom(4096)
+				header, payload, checksum = utils.unPack(pckt)
+				if str(ackNum) == header[2] and header[4] and utils.checksum(pckt):
+				  pckts.append(pckt)
+				  x += 1
+				  ackNum += 1
+				  msg += payload
+				  if header[6] == "True":
+					pckt = utils.createPckt("", serverPort, seqNum, ackNum, False, True, True, putwinSz, "FIN")
+					sock.sendto(pckt, addr)
+					x = winSz
+					end = True
+				else:
+				  x = winSz
+				  print "ERROR: packets are lost or damaged"
+			  pckt = utils.createPckt("", serverPort, seqNum, ackNum, False, True, False, putwinSz, "ACK")
+			  sock.sendto(pckt, addr)
+			newFile = 'Received_' + filename
+			f = open(newFile, 'w')
+			f.write(msg)
+			f.close()
+			print "File received and duplicated"
